@@ -58,11 +58,12 @@ class PogodaPrediction:
             bias -= self.speed * m_hat_bias / (np.sqrt(v_hat_bias) + self.epsilon)
             return parameters, bias
 
-    def __init__(self, test_data: np.ndarray, train_data: np.ndarray):
-        self.epochs = 3000
-        self.learning_rate = 0.001
+    def __init__(self, test_data: np.ndarray, train_data: np.ndarray,
+                  epochs: int = 3000, learning_rate: float = 0.001, number_of_sinuses: int = 10):
+        self.epochs = epochs
+        self.learning_rate = learning_rate
         self.noise_std = 0.05
-        self.number_of_sinuses = 10
+        self.number_of_sinuses = number_of_sinuses
 
         self.test_data = test_data.copy()
         self.train_data = train_data.copy()
@@ -70,7 +71,10 @@ class PogodaPrediction:
 
     def _process_data(self):
         self._transform_dates_to_correct_form()
-        
+
+        self.train_data = self._except_emissions(self.train_data)
+        self.test_data = self._except_emissions(self.test_data)
+
         self.train_normalize_class = self.Normalize(self.train_data[:, 1:])
         self.train_data[:, 1:] = self.train_normalize_class.normalizeData()
         
@@ -83,6 +87,41 @@ class PogodaPrediction:
         self.test_data[:, 0] = np.vectorize(self.days_since_zero_date)(self.test_data[:, 0])
         self.train_data = self.train_data.astype(np.float64)
         self.test_data = self.test_data.astype(np.float64)
+
+    def _except_emissions(self, data: np.ndarray, window: int = 3, threshold = 2.0) -> np.ndarray:
+        n_rows, n_columns = data.shape
+
+        for col in range(n_columns):
+            column_data = data[:, col]
+
+            for i in range(n_rows):
+                left = max(0, i - window//2)
+                right = min(n_rows, i + window//2 + 1)
+
+                neighbors = []
+                for j in range(left, right):
+                    if j != i:
+                        neighbors.append(column_data[j])
+                
+                if not neighbors:
+                    continue
+                    
+                avg = np.mean(neighbors)
+                std = np.std(neighbors)
+                
+                if abs(column_data[i] - avg) > threshold * std:
+                    good_values = []
+                    for j in range(left, right):
+                        val = column_data[j]
+                        if abs(val - avg) <= threshold * std:
+                            good_values.append(val)
+                    
+                    if not good_values:
+                        continue
+
+                    data[i, col] = avg
+
+        return data
 
     def _transform_data_with_SMA(self):
         window_size = max(1, self.train_data.shape[0] // 70)
@@ -204,7 +243,7 @@ class PogodaPrediction:
         denormalized_predictions = self.train_normalize_class.DeNormalizeData(
             self.predictions_noisy, 
             axes=[column]
-        )[:len(self.test_data)]
+        )[:self.test_data.shape[0]]
 
         plt.subplot(2, 1, 2)
         plt.plot(self.test_data[:, column + 1], label='Тестовые данные')
@@ -212,10 +251,14 @@ class PogodaPrediction:
         plt.title("Сравнение с тестовыми данными")
         plt.legend()
         
-        print(self._compute_MAE_loss(denormalized_predictions, self.test_data[:, column]))
+        print(self._compute_MAE_loss(denormalized_predictions, self.test_data[:, column + 1]))
         plt.show()
 
-model = PogodaPrediction(test_data, train_data)
+epochs = int(input("Введите количество эпох (рекомендуемо 2000): "))
+learning_rate = float(input("Введите скорость обучения (рекомендуемо 0.001): "))
+number_of_sinuses = int(input("Введите количество вносящих вклад синусов (рекомендуемо 5): "))
+model = PogodaPrediction(test_data, train_data, epochs, learning_rate, number_of_sinuses)
+
 for i in range(4):
     model.train(i)
     model.visualize_results(i)
